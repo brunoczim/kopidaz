@@ -1,0 +1,243 @@
+use crate::error::Error;
+use bincode::Options;
+use std::{future::Future, marker::PhantomData};
+use tokio::task;
+
+pub type Id = u64;
+
+#[derive(Debug, Default)]
+pub struct EntryBuffer {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+impl EntryBuffer {
+    pub fn free_key(&mut self) {
+        self.key = Vec::new();
+    }
+
+    pub fn free_value(&mut self) {
+        self.value = Vec::new();
+    }
+
+    fn encode_key<K>(&mut self, key: K) -> Result<&[u8], Error>
+    where
+        K: serde::Serialize,
+    {
+        self.key.clear();
+        encode(key, &mut self.key)?;
+        Ok(&self.key)
+    }
+
+    fn encode_value<V>(&mut self, value: V) -> Result<&[u8], Error>
+    where
+        V: serde::Serialize,
+    {
+        self.value.clear();
+        encode(value, &mut self.value)?;
+        Ok(&self.value)
+    }
+
+    fn encode<K, V>(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(&[u8], &[u8]), Error>
+    where
+        K: serde::Serialize,
+        V: serde::Serialize,
+    {
+        self.encode_key(key)?;
+        self.encode_value(value)?;
+        Ok((&self.key, &self.value))
+    }
+
+    fn decode_key<'de, K>(&'de mut self) -> Result<K, Error>
+    where
+        K: serde::Deserialize<'de>,
+    {
+        decode(&self.key)
+    }
+
+    fn decode_value<'de, V>(&'de mut self) -> Result<V, Error>
+    where
+        V: serde::Deserialize<'de>,
+    {
+        decode(&self.value)
+    }
+
+    fn decode<'de, K, V>(&'de mut self) -> Result<(K, V), Error>
+    where
+        K: serde::Deserialize<'de>,
+        V: serde::Deserialize<'de>,
+    {
+        let key = decode(&self.key)?;
+        let value = decode(&self.value)?;
+        Ok((key, value))
+    }
+}
+
+/// A persistent key-value structure.
+#[derive(Debug)]
+pub struct Tree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    storage: sled::Tree,
+    _marker: PhantomData<(K, V)>,
+}
+
+impl<K, V> Tree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    /// Opens this tree from a database.
+    pub async fn open<T>(db: &sled::Db, name: T) -> Result<Self, Error>
+    where
+        T: AsRef<[u8]>,
+    {
+        let storage = task::block_in_place(|| db.open_tree(name))?;
+        Ok(Self { storage, _marker: PhantomData })
+    }
+
+    /// Gets a value associated with a given key using the given allocated
+    /// buffer to serialize and dserialize key and value.
+    pub async fn get_with_buf(
+        &self,
+        key: &K,
+        buffer: &mut EntryBuffer,
+    ) -> Result<Option<V>, Error> {
+        let encoded_key = buffer.encode_key(key)?;
+        let maybe = task::block_in_place(|| self.storage.get(&encoded_key))?;
+        match maybe {
+            Some(encoded_value) => {
+                let val = decode(&encoded_value)?;
+                Ok(Some(val))
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Gets a value associated with a given key creating a one-time use buffer.
+    pub async fn get(&self, key: &K) -> Result<Option<V>, Error> {
+        self.get_with_buf(key, &mut EntryBuffer::default()).await
+    }
+
+    /// Inserts a value associated with a given key using the given allocated
+    /// buffer to serialize and dserialize key and value.
+    pub async fn insert_with_buf(
+        &self,
+        key: &K,
+        val: &V,
+        buffer: &mut EntryBuffer,
+    ) -> Result<(), Error> {
+        let (encoded_key, encoded_value) = buffer.encode(key, val)?;
+        task::block_in_place(|| {
+            self.storage.insert(&encoded_key, encoded_value)
+        })?;
+        Ok(())
+    }
+
+    /// Inserts a value associated with a given key creating a one-time use
+    /// buffer.
+    pub async fn insert(&self, key: &K, val: &V) -> Result<(), Error> {
+        self.insert_with_buf(key, val, &mut EntryBuffer::default()).await
+    }
+
+    /// Returns whether the given key is present in this tree using the given
+    /// allocated buffer to serialize and dserialize key and value.
+    pub async fn contains_key_with_buf(
+        &self,
+        key: &K,
+        buffer: &mut EntryBuffer,
+    ) -> Result<bool, Error> {
+        let encoded_key = buffer.encode_key(key)?;
+        let result =
+            task::block_in_place(|| self.storage.contains_key(&encoded_key))?;
+        Ok(result)
+    }
+
+    /// Returns whether the given key is present in this tree creating a
+    /// one-time use buffer.
+    pub async fn contains_key(&self, key: &K) -> Result<bool, Error> {
+        self.contains_key_with_buf(key, &mut EntryBuffer::default()).await
+    }
+
+    /// Tries to generate an ID until it is successful. The ID is stored
+    /// alongside with a value in a given tree using the given allocated buffer
+    /// to serialize and dserialize key and value.
+    pub async fn generate_id_with_buf<FK, FV, AK, AV, E>(
+        &self,
+        db: &sled::Db,
+        buffer: &mut EntryBuffer,
+        mut make_id: FK,
+        make_data: FV,
+    ) -> Result<K, E>
+    where
+        FK: FnMut(Id) -> AK,
+        FV: FnOnce(&K) -> AV,
+        AK: Future<Output = Result<K, E>>,
+        AV: Future<Output = Result<V, E>>,
+        E: From<Error>,
+    {
+        loop {
+            let gen_result = task::block_in_place(|| db.generate_id());
+            let generated = gen_result.map_err(Error::from)?;
+            let id = make_id(generated).await?;
+
+            let contains = self.contains_key_with_buf(&id, buffer).await?;
+
+            if !contains {
+                let data = make_data(&id).await?;
+                self.insert_with_buf(&id, &data, buffer).await?;
+                break Ok(id);
+            }
+
+            task::yield_now().await;
+        }
+    }
+
+    /// Tries to generate an ID until it is successful. The ID is stored
+    /// alongside with a value in a given tree creating a one-time use buffer.
+    pub async fn generate_id<FK, FV, AK, AV, E>(
+        &self,
+        db: &sled::Db,
+        make_id: FK,
+        make_data: FV,
+    ) -> Result<K, E>
+    where
+        FK: FnMut(Id) -> AK,
+        FV: FnOnce(&K) -> AV,
+        AK: Future<Output = Result<K, E>>,
+        AV: Future<Output = Result<V, E>>,
+        E: From<Error>,
+    {
+        let mut buffer = &mut EntryBuffer::default();
+        self.generate_id_with_buf(db, &mut buffer, make_id, make_data).await
+    }
+}
+
+/// Default configs for bincode.
+fn config() -> impl Options {
+    bincode::DefaultOptions::new().with_no_limit().with_big_endian()
+}
+
+/// Encodes a value into binary.
+fn encode<T>(data: T, buffer: &mut Vec<u8>) -> Result<(), Error>
+where
+    T: serde::Serialize,
+{
+    config().serialize_into(buffer, &data)?;
+    Ok(())
+}
+
+/// Decodes a value from binary.
+fn decode<'de, T>(bytes: &'de [u8]) -> Result<T, Error>
+where
+    T: serde::Deserialize<'de>,
+{
+    let data = config().deserialize(bytes)?;
+    Ok(data)
+}
