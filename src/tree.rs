@@ -1,5 +1,4 @@
-use crate::error::Error;
-use bincode::Options;
+use crate::{decode, encode, error::Error};
 use std::{future::Future, marker::PhantomData};
 use tokio::task;
 
@@ -50,30 +49,6 @@ impl EntryBuffer {
         self.encode_key(key)?;
         self.encode_value(value)?;
         Ok((&self.key, &self.value))
-    }
-
-    fn decode_key<'de, K>(&'de mut self) -> Result<K, Error>
-    where
-        K: serde::Deserialize<'de>,
-    {
-        decode(&self.key)
-    }
-
-    fn decode_value<'de, V>(&'de mut self) -> Result<V, Error>
-    where
-        V: serde::Deserialize<'de>,
-    {
-        decode(&self.value)
-    }
-
-    fn decode<'de, K, V>(&'de mut self) -> Result<(K, V), Error>
-    where
-        K: serde::Deserialize<'de>,
-        V: serde::Deserialize<'de>,
-    {
-        let key = decode(&self.key)?;
-        let value = decode(&self.value)?;
-        Ok((key, value))
     }
 }
 
@@ -217,27 +192,4 @@ where
         let mut buffer = &mut EntryBuffer::default();
         self.generate_id_with_buf(db, &mut buffer, make_id, make_data).await
     }
-}
-
-/// Default configs for bincode.
-fn config() -> impl Options {
-    bincode::DefaultOptions::new().with_no_limit().with_big_endian()
-}
-
-/// Encodes a value into binary.
-fn encode<T>(data: T, buffer: &mut Vec<u8>) -> Result<(), Error>
-where
-    T: serde::Serialize,
-{
-    config().serialize_into(buffer, &data)?;
-    Ok(())
-}
-
-/// Decodes a value from binary.
-fn decode<'de, T>(bytes: &'de [u8]) -> Result<T, Error>
-where
-    T: serde::Deserialize<'de>,
-{
-    let data = config().deserialize(bytes)?;
-    Ok(data)
 }
