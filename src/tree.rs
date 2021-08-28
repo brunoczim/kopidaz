@@ -1,56 +1,8 @@
-use crate::{decode, encode, error::Error};
+use crate::{decode, error::Error, EncodeBuffer};
 use std::{future::Future, marker::PhantomData};
 use tokio::task;
 
 pub type Id = u64;
-
-#[derive(Debug, Default)]
-pub struct EntryBuffer {
-    key: Vec<u8>,
-    value: Vec<u8>,
-}
-
-impl EntryBuffer {
-    pub fn free_key(&mut self) {
-        self.key = Vec::new();
-    }
-
-    pub fn free_value(&mut self) {
-        self.value = Vec::new();
-    }
-
-    fn encode_key<K>(&mut self, key: K) -> Result<&[u8], Error>
-    where
-        K: serde::Serialize,
-    {
-        self.key.clear();
-        encode(key, &mut self.key)?;
-        Ok(&self.key)
-    }
-
-    fn encode_value<V>(&mut self, value: V) -> Result<&[u8], Error>
-    where
-        V: serde::Serialize,
-    {
-        self.value.clear();
-        encode(value, &mut self.value)?;
-        Ok(&self.value)
-    }
-
-    fn encode<K, V>(
-        &mut self,
-        key: K,
-        value: V,
-    ) -> Result<(&[u8], &[u8]), Error>
-    where
-        K: serde::Serialize,
-        V: serde::Serialize,
-    {
-        self.encode_key(key)?;
-        self.encode_value(value)?;
-        Ok((&self.key, &self.value))
-    }
-}
 
 /// A persistent key-value structure.
 #[derive(Debug)]
@@ -82,7 +34,7 @@ where
     pub async fn get_with_buf(
         &self,
         key: &K,
-        buffer: &mut EntryBuffer,
+        buffer: &mut EncodeBuffer,
     ) -> Result<Option<V>, Error> {
         let encoded_key = buffer.encode_key(key)?;
         let maybe = task::block_in_place(|| self.storage.get(&encoded_key))?;
@@ -97,7 +49,7 @@ where
 
     /// Gets a value associated with a given key creating a one-time use buffer.
     pub async fn get(&self, key: &K) -> Result<Option<V>, Error> {
-        self.get_with_buf(key, &mut EntryBuffer::default()).await
+        self.get_with_buf(key, &mut EncodeBuffer::default()).await
     }
 
     /// Inserts a value associated with a given key using the given allocated
@@ -106,7 +58,7 @@ where
         &self,
         key: &K,
         val: &V,
-        buffer: &mut EntryBuffer,
+        buffer: &mut EncodeBuffer,
     ) -> Result<(), Error> {
         let (encoded_key, encoded_value) = buffer.encode(key, val)?;
         task::block_in_place(|| {
@@ -118,7 +70,7 @@ where
     /// Inserts a value associated with a given key creating a one-time use
     /// buffer.
     pub async fn insert(&self, key: &K, val: &V) -> Result<(), Error> {
-        self.insert_with_buf(key, val, &mut EntryBuffer::default()).await
+        self.insert_with_buf(key, val, &mut EncodeBuffer::default()).await
     }
 
     /// Returns whether the given key is present in this tree using the given
@@ -126,7 +78,7 @@ where
     pub async fn contains_key_with_buf(
         &self,
         key: &K,
-        buffer: &mut EntryBuffer,
+        buffer: &mut EncodeBuffer,
     ) -> Result<bool, Error> {
         let encoded_key = buffer.encode_key(key)?;
         let result =
@@ -137,7 +89,7 @@ where
     /// Returns whether the given key is present in this tree creating a
     /// one-time use buffer.
     pub async fn contains_key(&self, key: &K) -> Result<bool, Error> {
-        self.contains_key_with_buf(key, &mut EntryBuffer::default()).await
+        self.contains_key_with_buf(key, &mut EncodeBuffer::default()).await
     }
 
     /// Tries to generate an ID until it is successful. The ID is stored
@@ -146,7 +98,7 @@ where
     pub async fn generate_id_with_buf<FK, FV, AK, AV, E>(
         &self,
         db: &sled::Db,
-        buffer: &mut EntryBuffer,
+        buffer: &mut EncodeBuffer,
         mut make_id: FK,
         make_data: FV,
     ) -> Result<K, E>
@@ -189,7 +141,7 @@ where
         AV: Future<Output = Result<V, E>>,
         E: From<Error>,
     {
-        let mut buffer = &mut EntryBuffer::default();
+        let mut buffer = &mut EncodeBuffer::default();
         self.generate_id_with_buf(db, &mut buffer, make_id, make_data).await
     }
 }
