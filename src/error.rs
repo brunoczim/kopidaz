@@ -1,3 +1,5 @@
+//! Exports error types for this library.
+
 use std::{error::Error as ErrorTrait, fmt};
 
 /// The kind of an error that may happen handling storage.
