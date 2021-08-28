@@ -163,7 +163,7 @@ where
     /// Tries to generate an ID until it is successful. The ID is stored
     /// alongside with a value in a given tree using the given allocated buffer
     /// to serialize and dserialize key and value.
-    pub async fn generate_id_with_buf<FK, FV, AK, AV, E>(
+    pub async fn generate_id_with_buf<E, FK, FV, AK, AV>(
         &self,
         db: &sled::Db,
         buffer: &mut EncodeBuffer,
@@ -196,7 +196,7 @@ where
 
     /// Tries to generate an ID until it is successful. The ID is stored
     /// alongside with a value in a given tree creating a one-time use buffer.
-    pub async fn generate_id<FK, FV, AK, AV, E>(
+    pub async fn generate_id<E, FK, FV, AK, AV>(
         &self,
         db: &sled::Db,
         make_id: FK,
