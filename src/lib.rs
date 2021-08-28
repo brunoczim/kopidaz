@@ -9,13 +9,23 @@ fn config() -> impl Options {
     bincode::DefaultOptions::new().with_no_limit().with_big_endian()
 }
 
-/// Encodes a value into binary.
-pub fn encode<T>(data: T, buffer: &mut Vec<u8>) -> Result<(), Error>
+/// Encodes a value into binary, using the given buffer.
+pub fn encode_into<T>(data: T, buffer: &mut Vec<u8>) -> Result<(), Error>
 where
     T: serde::Serialize,
 {
     config().serialize_into(buffer, &data)?;
     Ok(())
+}
+
+/// Encodes a value into binary, allocating a new buffer.
+pub fn encode<T>(data: T) -> Result<Vec<u8>, Error>
+where
+    T: serde::Serialize,
+{
+    let mut buffer = Vec::new();
+    encode_into(data, &mut buffer)?;
+    Ok(buffer)
 }
 
 /// Decodes a value from binary.

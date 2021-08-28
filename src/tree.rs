@@ -1,6 +1,6 @@
 //! Exports a persistent, serializing/deserializing ordered tree.
 
-use crate::{decode, encode, error::Error};
+use crate::{decode, encode_into, error::Error};
 use std::{future::Future, marker::PhantomData};
 use tokio::task;
 
@@ -28,7 +28,7 @@ impl EncodeBuffer {
         K: serde::Serialize,
     {
         self.key.clear();
-        encode(key, &mut self.key)?;
+        encode_into(key, &mut self.key)?;
         Ok(&self.key)
     }
 
@@ -38,7 +38,7 @@ impl EncodeBuffer {
         V: serde::Serialize,
     {
         self.value.clear();
-        encode(value, &mut self.value)?;
+        encode_into(value, &mut self.value)?;
         Ok(&self.value)
     }
 
