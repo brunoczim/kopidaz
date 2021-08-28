@@ -1,7 +1,7 @@
 //! Exports a persistent, serializing/deserializing ordered tree.
 
 use crate::{decode, encode_into, error::Error};
-use std::{future::Future, marker::PhantomData};
+use std::{fmt, future::Future, marker::PhantomData};
 use tokio::task;
 
 /// Buffer for more efficient allocation on key-value serialization.
@@ -74,7 +74,6 @@ impl EncodeBuffer {
 pub type Id = u64;
 
 /// A persistent key-value structure.
-#[derive(Debug)]
 pub struct Tree<K, V>
 where
     for<'de> K: serde::Serialize + serde::Deserialize<'de>,
@@ -212,5 +211,25 @@ where
     {
         let mut buffer = &mut EncodeBuffer::default();
         self.generate_id_with_buf(db, &mut buffer, make_id, make_data).await
+    }
+}
+
+impl<K, V> Clone for Tree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    fn clone(&self) -> Self {
+        Self { _marker: self._marker, storage: self.storage.clone() }
+    }
+}
+
+impl<K, V> fmt::Debug for Tree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
+        fmtr.debug_struct("Tree").field("storage", &self.storage).finish()
     }
 }
