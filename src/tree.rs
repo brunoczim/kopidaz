@@ -127,17 +127,20 @@ where
         key: &K,
         val: &V,
         buffer: &mut EncodeBuffer,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<V>, Error> {
         let (encoded_key, encoded_value) = buffer.encode(key, val)?;
-        task::block_in_place(|| {
+        let encoded = task::block_in_place(|| {
             self.storage.insert(&encoded_key, encoded_value)
         })?;
-        Ok(())
+        match encoded {
+            Some(encoded_val) => Ok(Some(decode(&encoded_val)?)),
+            None => Ok(None),
+        }
     }
 
     /// Inserts a value associated with a given key creating a one-time use
     /// buffer.
-    pub async fn insert(&self, key: &K, val: &V) -> Result<(), Error> {
+    pub async fn insert(&self, key: &K, val: &V) -> Result<Option<V>, Error> {
         self.insert_with_buf(key, val, &mut EncodeBuffer::default()).await
     }
 
@@ -158,6 +161,25 @@ where
     /// one-time use buffer.
     pub async fn contains_key(&self, key: &K) -> Result<bool, Error> {
         self.contains_key_with_buf(key, &mut EncodeBuffer::default()).await
+    }
+
+    /// Removes the entry identified by the given key using the given buffer.
+    pub async fn remove_with_buf(
+        &self,
+        key: &K,
+        buffer: &mut EncodeBuffer,
+    ) -> Result<Option<V>, Error> {
+        let encoded_key = buffer.encode_key(key)?;
+        match task::block_in_place(|| self.storage.remove(&encoded_key))? {
+            Some(encoded_val) => Ok(Some(decode(&encoded_val)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Removes the entry identified by the given key creating a one-time use
+    /// buffer.
+    pub async fn remove(&self, key: &K) -> Result<Option<V>, Error> {
+        self.remove_with_buf(key, &mut EncodeBuffer::default()).await
     }
 
     /// Tries to generate an ID until it is successful. The ID is stored
@@ -231,5 +253,103 @@ where
 {
     fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
         fmtr.debug_struct("Tree").field("storage", &self.storage).finish()
+    }
+}
+
+/// A persistent key-value structure that is equiped with an encode buffer.
+pub struct BufferedTree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    buffer: EncodeBuffer,
+    inner: Tree<K, V>,
+}
+
+impl<K, V> BufferedTree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    /// Opens this tree from a database.
+    pub async fn open<T>(db: &sled::Db, name: T) -> Result<Self, Error>
+    where
+        T: AsRef<[u8]>,
+    {
+        let tree = Tree::open(db, name).await?;
+        Ok(Self::from_tree(tree))
+    }
+
+    /// Creates a buffered tree from a regular tree.
+    pub fn from_tree(tree: Tree<K, V>) -> Self {
+        Self { inner: tree, buffer: EncodeBuffer::default() }
+    }
+
+    /// Gets a value associated with a given key using the tree buffer.
+    pub async fn get(&mut self, key: &K) -> Result<Option<V>, Error> {
+        self.inner.get_with_buf(key, &mut self.buffer).await
+    }
+
+    /// Inserts a value associated with a given key using the tree buffer.
+    pub async fn insert(
+        &mut self,
+        key: &K,
+        val: &V,
+    ) -> Result<Option<V>, Error> {
+        self.inner.insert_with_buf(key, val, &mut self.buffer).await
+    }
+
+    /// Returns whether the given key is present in this tree using the tree
+    /// buffer.
+    pub async fn contains_key(&mut self, key: &K) -> Result<bool, Error> {
+        self.inner.contains_key_with_buf(key, &mut self.buffer).await
+    }
+
+    /// Removes the entry identified by the given key using the tree buffer.
+    pub async fn remove(&mut self, key: &K) -> Result<Option<V>, Error> {
+        self.inner.remove_with_buf(key, &mut self.buffer).await
+    }
+
+    /// Tries to generate an ID until it is successful. The ID is stored
+    /// alongside with a value in a given tree using the tree buffer.
+    pub async fn generate_id<E, FK, FV, AK, AV>(
+        &mut self,
+        db: &sled::Db,
+        make_id: FK,
+        make_data: FV,
+    ) -> Result<K, E>
+    where
+        FK: FnMut(Id) -> AK,
+        FV: FnOnce(&K) -> AV,
+        AK: Future<Output = Result<K, E>>,
+        AV: Future<Output = Result<V, E>>,
+        E: From<Error>,
+    {
+        self.inner
+            .generate_id_with_buf(db, &mut self.buffer, make_id, make_data)
+            .await
+    }
+}
+
+impl<K, V> Clone for BufferedTree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    fn clone(&self) -> Self {
+        Self { buffer: self.buffer.clone(), inner: self.inner.clone() }
+    }
+}
+
+impl<K, V> fmt::Debug for BufferedTree<K, V>
+where
+    for<'de> K: serde::Serialize + serde::Deserialize<'de>,
+    for<'de> V: serde::Serialize + serde::Deserialize<'de>,
+{
+    fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
+        fmtr.debug_struct("BufferedTree")
+            .field("buffer", &self.buffer)
+            .field("inner", &self.inner)
+            .finish()
     }
 }
