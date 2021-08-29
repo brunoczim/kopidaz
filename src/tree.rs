@@ -5,7 +5,7 @@ use std::{fmt, future::Future, marker::PhantomData};
 use tokio::task;
 
 /// Buffer for more efficient allocation on key-value serialization.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EncodeBuffer {
     key: Vec<u8>,
     value: Vec<u8>,
