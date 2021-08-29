@@ -1,7 +1,7 @@
 //! Exports a persistent, serializing/deserializing ordered tree.
 
 use crate::{decode, encode_into, error::Error};
-use std::{fmt, future::Future, marker::PhantomData};
+use std::{cell::Cell, fmt, future::Future, marker::PhantomData};
 use tokio::task;
 
 /// Buffer for more efficient allocation on key-value serialization.
@@ -256,13 +256,15 @@ where
     }
 }
 
-/// A persistent key-value structure that is equiped with an encode buffer.
+/// A persistent key-value structure that is equiped with an encode buffer, but
+/// not entirely thread-safe, so wrapping it in a lock is required for
+/// multithreading.
 pub struct BufferedTree<K, V>
 where
     for<'de> K: serde::Serialize + serde::Deserialize<'de>,
     for<'de> V: serde::Serialize + serde::Deserialize<'de>,
 {
-    buffer: EncodeBuffer,
+    buffer: Cell<EncodeBuffer>,
     inner: Tree<K, V>,
 }
 
@@ -280,40 +282,75 @@ where
         Ok(Self::from_tree(tree))
     }
 
+    async fn with_buf<F, A, T>(&self, visitor: F) -> T
+    where
+        F: FnOnce(EncodeBuffer) -> A,
+        A: Future<Output = (EncodeBuffer, T)>,
+    {
+        let buffer = self.buffer.take();
+        let (buffer, ret) = visitor(buffer).await;
+        self.buffer.set(buffer);
+        ret
+    }
+
+    fn with_buf_sync<F, T>(&self, visitor: F) -> T
+    where
+        F: FnOnce(&mut EncodeBuffer) -> T,
+    {
+        let mut buffer = self.buffer.take();
+        let ret = visitor(&mut buffer);
+        self.buffer.set(buffer);
+        ret
+    }
+
     /// Creates a buffered tree from a regular tree.
     pub fn from_tree(tree: Tree<K, V>) -> Self {
-        Self { inner: tree, buffer: EncodeBuffer::default() }
+        Self { inner: tree, buffer: Cell::new(EncodeBuffer::default()) }
     }
 
     /// Gets a value associated with a given key using the tree buffer.
-    pub async fn get(&mut self, key: &K) -> Result<Option<V>, Error> {
-        self.inner.get_with_buf(key, &mut self.buffer).await
+    pub async fn get(&self, key: &K) -> Result<Option<V>, Error> {
+        let execution = self.with_buf(|mut buffer| async {
+            let result = self.inner.get_with_buf(key, &mut buffer).await;
+            (buffer, result)
+        });
+        execution.await
     }
 
     /// Inserts a value associated with a given key using the tree buffer.
-    pub async fn insert(
-        &mut self,
-        key: &K,
-        val: &V,
-    ) -> Result<Option<V>, Error> {
-        self.inner.insert_with_buf(key, val, &mut self.buffer).await
+    pub async fn insert(&self, key: &K, val: &V) -> Result<Option<V>, Error> {
+        let execution = self.with_buf(|mut buffer| async {
+            let result =
+                self.inner.insert_with_buf(key, val, &mut buffer).await;
+            (buffer, result)
+        });
+        execution.await
     }
 
     /// Returns whether the given key is present in this tree using the tree
     /// buffer.
-    pub async fn contains_key(&mut self, key: &K) -> Result<bool, Error> {
-        self.inner.contains_key_with_buf(key, &mut self.buffer).await
+    pub async fn contains_key(&self, key: &K) -> Result<bool, Error> {
+        let execution = self.with_buf(|mut buffer| async {
+            let result =
+                self.inner.contains_key_with_buf(key, &mut buffer).await;
+            (buffer, result)
+        });
+        execution.await
     }
 
     /// Removes the entry identified by the given key using the tree buffer.
-    pub async fn remove(&mut self, key: &K) -> Result<Option<V>, Error> {
-        self.inner.remove_with_buf(key, &mut self.buffer).await
+    pub async fn remove(&self, key: &K) -> Result<Option<V>, Error> {
+        let execution = self.with_buf(|mut buffer| async {
+            let result = self.inner.remove_with_buf(key, &mut buffer).await;
+            (buffer, result)
+        });
+        execution.await
     }
 
     /// Tries to generate an ID until it is successful. The ID is stored
     /// alongside with a value in a given tree using the tree buffer.
     pub async fn generate_id<E, FK, FV, AK, AV>(
-        &mut self,
+        &self,
         db: &sled::Db,
         make_id: FK,
         make_data: FV,
@@ -325,9 +362,14 @@ where
         AV: Future<Output = Result<V, E>>,
         E: From<Error>,
     {
-        self.inner
-            .generate_id_with_buf(db, &mut self.buffer, make_id, make_data)
-            .await
+        let execution = self.with_buf(|mut buffer| async {
+            let result = self
+                .inner
+                .generate_id_with_buf(db, &mut buffer, make_id, make_data)
+                .await;
+            (buffer, result)
+        });
+        execution.await
     }
 }
 
@@ -337,7 +379,8 @@ where
     for<'de> V: serde::Serialize + serde::Deserialize<'de>,
 {
     fn clone(&self) -> Self {
-        Self { buffer: self.buffer.clone(), inner: self.inner.clone() }
+        let buffer = self.with_buf_sync(|buffer| buffer.clone());
+        Self { buffer: Cell::new(buffer), inner: self.inner.clone() }
     }
 }
 
@@ -347,9 +390,8 @@ where
     for<'de> V: serde::Serialize + serde::Deserialize<'de>,
 {
     fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
-        fmtr.debug_struct("BufferedTree")
-            .field("buffer", &self.buffer)
-            .field("inner", &self.inner)
-            .finish()
+        let mut debugging = fmtr.debug_struct("BufferedTree");
+        self.with_buf_sync(|buffer| debugging.field("buffer", buffer));
+        debugging.field("inner", &self.inner).finish()
     }
 }
