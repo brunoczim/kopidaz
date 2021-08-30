@@ -1,4 +1,5 @@
 pub mod error;
+pub mod buffer;
 pub mod tree;
 
 use crate::error::Error;
