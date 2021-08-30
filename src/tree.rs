@@ -51,10 +51,15 @@ where
         }
     }
 
+    /// Gets the value associated with the given `key`, returning `None` if key
+    /// is not found. Serializes key using a buffer from a thread-local buffer
+    /// pool.
     pub async fn get(&self, key: &K) -> Result<Option<V>, Error> {
         self.get_with(key, buffer::DefaultPool).await
     }
 
+    /// Gets the value associated with the given `key`, returning `None` if key
+    /// is not found. Uses the given allocation strategy for making buffers.
     pub async fn get_with<A>(
         &self,
         key: &K,
@@ -63,7 +68,7 @@ where
     where
         A: buffer::Allocation,
     {
-        let mut key_buf = allocation.get();
+        let mut key_buf = allocation.make();
         let result = self.get_raw(key, &mut key_buf).await;
         allocation.save(key_buf);
         result
@@ -87,10 +92,16 @@ where
         }
     }
 
+    /// Inserts key and value returning `None` if key is new, `Some(old_value)`
+    /// if the key already exists (and replacing its data). Serializes key and
+    /// value using a buffer from a thread-local buffer pool.
     pub async fn insert(&self, key: &K, val: &V) -> Result<Option<V>, Error> {
         self.insert_with(key, val, buffer::DefaultPool).await
     }
 
+    /// Inserts key and value returning `None` if key is new, `Some(old_value)`
+    /// if the key already exists (and replacing its data). Uses the given
+    /// allocation strategy for making buffers.
     pub async fn insert_with<A>(
         &self,
         key: &K,
@@ -100,8 +111,8 @@ where
     where
         A: buffer::Allocation,
     {
-        let mut key_buf = allocation.get();
-        let mut val_buf = allocation.get();
+        let mut key_buf = allocation.make();
+        let mut val_buf = allocation.make();
         let result =
             self.insert_raw(key, val, &mut key_buf, &mut val_buf).await;
         allocation.save(key_buf);
@@ -120,10 +131,14 @@ where
         Ok(result)
     }
 
+    /// Tests if the given key exist. Serializes key using a buffer from a
+    /// thread-local buffer pool.
     pub async fn contains_key(&self, key: &K) -> Result<bool, Error> {
         self.contains_key_with(key, buffer::DefaultPool).await
     }
 
+    /// Tests if the given key exist. Uses the given allocation strategy for
+    /// making buffers.
     pub async fn contains_key_with<A>(
         &self,
         key: &K,
@@ -132,7 +147,7 @@ where
     where
         A: buffer::Allocation,
     {
-        let mut key_buf = allocation.get();
+        let mut key_buf = allocation.make();
         let result = self.contains_key_raw(key, &mut key_buf).await;
         allocation.save(key_buf);
         result
@@ -150,10 +165,15 @@ where
         }
     }
 
+    /// Removes the value associated with the given `key`, returning `None` if
+    /// key is not found. Serializes key using a buffer from a thread-local
+    /// buffer pool.
     pub async fn remove(&self, key: &K) -> Result<Option<V>, Error> {
         self.remove_with(key, buffer::DefaultPool).await
     }
 
+    /// Removes the value associated with the given `key`, returning `None` if
+    /// key is not found. Uses the given allocation strategy for making buffers.
     pub async fn remove_with<A>(
         &self,
         key: &K,
@@ -162,7 +182,7 @@ where
     where
         A: buffer::Allocation,
     {
-        let mut key_buf = allocation.get();
+        let mut key_buf = allocation.make();
         let result = self.remove_raw(key, &mut key_buf).await;
         allocation.save(key_buf);
         result
@@ -200,6 +220,13 @@ where
         }
     }
 
+    /// Tries to generate a new ID as a key of an entry, and when successful,
+    /// inserts the key with a value. First of all, it generates an integer, and
+    /// then it uses the given future-function `make_id` to produce a key. When
+    /// an actual new key is found, it uses another future-function `make_data`
+    /// to produce a value associated with the key. With a key-value pair, it
+    /// inserts them in the tree. Serializes key and value using a buffer from a
+    /// thread-local buffer pool.
     pub async fn generate_id<E, FK, FV, AK, AV>(
         &self,
         db: &sled::Db,
@@ -216,6 +243,13 @@ where
         self.generate_id_with(db, buffer::DefaultPool, make_id, make_data).await
     }
 
+    /// Tries to generate a new ID as a key of an entry, and when successful,
+    /// inserts the key with a value. First of all, it generates an integer, and
+    /// then it uses the given future-function `make_id` to produce a key. When
+    /// an actual new key is found, it uses another future-function `make_data`
+    /// to produce a value associated with the key. With a key-value pair, it
+    /// inserts them in the tree. Uses the given allocation strategy for making
+    /// buffers.
     pub async fn generate_id_with<A, E, FK, FV, AK, AV>(
         &self,
         db: &sled::Db,
@@ -231,8 +265,8 @@ where
         AK: Future<Output = Result<K, E>>,
         AV: Future<Output = Result<V, E>>,
     {
-        let mut key_buf = allocation.get();
-        let mut val_buf = allocation.get();
+        let mut key_buf = allocation.make();
+        let mut val_buf = allocation.make();
         let result = self
             .generate_id_raw(db, &mut key_buf, &mut val_buf, make_id, make_data)
             .await;
