@@ -195,7 +195,7 @@ where
         val_buf: &mut Buffer,
         mut make_id: FK,
         make_data: FV,
-    ) -> Result<K, E>
+    ) -> Result<(K, V), E>
     where
         E: From<Error>,
         FK: FnMut(Id) -> AK,
@@ -213,7 +213,7 @@ where
             if !contains {
                 let data = make_data(&id).await?;
                 self.insert_raw(&id, &data, key_buf, val_buf).await?;
-                break Ok(id);
+                break Ok((id, data));
             }
 
             task::yield_now().await;
@@ -232,7 +232,7 @@ where
         db: &sled::Db,
         make_id: FK,
         make_data: FV,
-    ) -> Result<K, E>
+    ) -> Result<(K, V), E>
     where
         E: From<Error>,
         FK: FnMut(Id) -> AK,
@@ -256,7 +256,7 @@ where
         mut allocation: A,
         make_id: FK,
         make_data: FV,
-    ) -> Result<K, E>
+    ) -> Result<(K, V), E>
     where
         A: buffer::Allocation,
         E: From<Error>,
