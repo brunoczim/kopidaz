@@ -493,12 +493,15 @@ where
         let mut key_buf = self.allocation.make();
         let mut val_buf = self.allocation.make();
 
-        loop {
+        let output = loop {
             let generated = match task::block_in_place(|| db.generate_id()) {
                 Ok(id) => id,
                 Err(error) => break Err((self.make_error)(error.into())),
             };
-            let id = (self.make_id)(generated).await?;
+            let id = match (self.make_id)(generated).await {
+                Ok(id) => id,
+                Err(error) => break Err(error),
+            };
 
             let contains =
                 match self.tree.contains_key_raw(&id, &mut key_buf).await {
@@ -507,7 +510,10 @@ where
                 };
 
             if !contains {
-                let data = (self.make_data)(&id).await?;
+                let data = match (self.make_data)(&id).await {
+                    Ok(data) => data,
+                    Err(error) => break Err(error),
+                };
                 if let Err(error) = self
                     .tree
                     .insert_raw(&id, &data, &mut key_buf, &mut val_buf)
@@ -520,6 +526,11 @@ where
             }
 
             task::yield_now().await;
-        }
+        };
+
+        self.allocation.save(key_buf);
+        self.allocation.save(val_buf);
+
+        output
     }
 }
