@@ -399,7 +399,7 @@ where
     /// and is SYNChronous.
     pub fn data_maker<FV0, E>(
         self,
-        mut make_data: FV0,
+        make_data: FV0,
     ) -> IdBuilder<
         'tree,
         K,
@@ -407,10 +407,10 @@ where
         A,
         FE,
         FK,
-        impl FnMut(&Id) -> future::Ready<Result<V, E>>,
+        impl FnOnce(&Id) -> future::Ready<Result<V, E>>,
     >
     where
-        FV0: FnMut(&Id) -> V,
+        FV0: FnOnce(&Id) -> V,
     {
         self.fallible_async_data_maker(move |id| {
             future::ready(Ok(make_data(id)))
@@ -421,7 +421,7 @@ where
     /// and is SYNChronous.
     pub fn fallible_data_maker<FV0, E>(
         self,
-        mut make_data: FV0,
+        make_data: FV0,
     ) -> IdBuilder<
         'tree,
         K,
@@ -429,10 +429,10 @@ where
         A,
         FE,
         FK,
-        impl FnMut(&Id) -> future::Ready<Result<V, E>>,
+        impl FnOnce(&Id) -> future::Ready<Result<V, E>>,
     >
     where
-        FV0: FnMut(&Id) -> Result<V, E>,
+        FV0: FnOnce(&Id) -> Result<V, E>,
     {
         self.fallible_async_data_maker(move |id| future::ready(make_data(id)))
     }
@@ -441,7 +441,7 @@ where
     /// and is ASYNChronous.
     pub fn async_data_maker<FV0, AV, E>(
         self,
-        mut make_data: FV0,
+        make_data: FV0,
     ) -> IdBuilder<
         'tree,
         K,
@@ -449,10 +449,10 @@ where
         A,
         FE,
         FK,
-        impl FnMut(&Id) -> Map<AV, fn(V) -> Result<V, E>>,
+        impl FnOnce(&Id) -> Map<AV, fn(V) -> Result<V, E>>,
     >
     where
-        FV0: FnMut(&Id) -> AV,
+        FV0: FnOnce(&Id) -> AV,
         AV: Future<Output = V>,
     {
         self.fallible_async_data_maker(move |bits| {
@@ -467,7 +467,7 @@ where
         make_data: FV0,
     ) -> IdBuilder<'tree, K, V, A, FE, FK, FV0>
     where
-        FV0: FnMut(&Id) -> AV,
+        FV0: FnOnce(&Id) -> AV,
         AV: Future<Output = Result<V, E>>,
     {
         IdBuilder {
