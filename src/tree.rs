@@ -448,8 +448,8 @@ where
     }
 
     /// Generates the ID whenever the builder is ready. The builder is ready if
-    /// all of "error conversor", "id maker" and "data maker". Meanwhile,
-    /// "allocator" has a default value.
+    /// all of "id maker" and "data maker". Meanwhile, "allocator" and "error
+    /// conversor" have a default value.
     pub async fn generate<E, AK, AV>(
         mut self,
         db: &sled::Db,
