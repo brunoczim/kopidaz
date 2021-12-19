@@ -196,12 +196,15 @@ where
     /// generates an integer, and then it uses the given function `make_id` to
     /// produce a key. When an actual such key is indeed new, the method uses
     /// another function, `make_data`, to produce a value associated with the
-    /// key. With a key-value pair, it inserts them in the tree.  Serializes key
-    /// and value using thread-local buffer by default, but allows passing a
-    /// custom allocation.
+    /// key. With a key-value pair, it inserts them in the tree.
+    ///
+    /// Serializes key and value using thread-local buffer by default, but
+    /// allows passing a custom allocation. Also by default, all errors could
+    /// only be [`Error`], but that behaviour is configurable via
+    /// [`IdBuilder::error_conversor`];
     pub fn id_builder(
         &self,
-    ) -> IdBuilder<K, V, buffer::DefaultPool, (), (), ()> {
+    ) -> IdBuilder<K, V, buffer::DefaultPool, fn(Error) -> Error, (), ()> {
         IdBuilder::new(self)
     }
 }
@@ -240,7 +243,8 @@ where
     make_data: FV,
 }
 
-impl<'tree, K, V> IdBuilder<'tree, K, V, buffer::DefaultPool, (), (), ()>
+impl<'tree, K, V>
+    IdBuilder<'tree, K, V, buffer::DefaultPool, fn(Error) -> Error, (), ()>
 where
     for<'de> K: serde::Serialize + serde::Deserialize<'de>,
     for<'de> V: serde::Serialize + serde::Deserialize<'de>,
@@ -249,7 +253,7 @@ where
         Self {
             tree,
             allocation: buffer::DefaultPool,
-            make_error: (),
+            make_error: |error| error,
             make_id: (),
             make_data: (),
         }
