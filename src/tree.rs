@@ -280,7 +280,7 @@ where
     }
 
     /// Sets the error conversor (a function).
-    pub fn error_converter<FE0, E>(
+    pub fn error_conversor<FE0, E>(
         self,
         make_error: FE0,
     ) -> IdBuilder<'tree, K, V, A, FE0, FK, FV>
@@ -304,7 +304,7 @@ where
     where
         E: From<Error>,
     {
-        self.error_converter(E::from)
+        self.error_conversor(E::from)
     }
 
     /// Sets the given function as the "id maker", a function that CANNOT fail
