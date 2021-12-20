@@ -1,9 +1,21 @@
+//! This crate provides a wrapper over sled for typed trees. WIP.
+
 pub mod error;
 pub mod buffer;
 pub mod tree;
 
 use crate::error::Error;
 use bincode::Options;
+use std::path::Path;
+use tokio::task;
+
+/// Opens a database in the given path.
+pub async fn open<P>(path: P) -> Result<sled::Db, Error>
+where
+    P: AsRef<Path>,
+{
+    task::block_in_place(|| Ok(sled::open(path)?))
+}
 
 /// Default configs for bincode.
 fn config() -> impl Options {
